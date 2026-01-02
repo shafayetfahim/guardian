@@ -34,17 +34,23 @@ func main() {
 	fmt.Printf("🛡️  Guardian: Scanning %s...\n", ingestPath)
 
 	// 4. Run the Crawler
-	files, err := crawler.Search(ingestPath, []string{".jpg", ".png", ".ARW"})
+	files, err := crawler.Search(ingestPath, []string{".jpg", ".png", ".jpeg", ".ARW"})
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// 5. Save to Store
+	// 5. Save to Store with Error Tracking
+	indexedCount := 0
 	for _, file := range files {
-		store.SaveAsset(db, file, "Photography")
+		err := store.SaveAsset(db, file, "Photography")
+		if err != nil {
+			fmt.Printf("❌ Failed to save %s: %v\n", file, err)
+			continue
+		}
+		indexedCount++
 	}
 
-	fmt.Printf("✅ Success! Indexed %d files into the Vault.\n", len(files))
+	fmt.Printf("✅ Success! Truly indexed %d files into the Vault.\n", indexedCount)
 }
 
 func initDatabase(db *sql.DB) {
