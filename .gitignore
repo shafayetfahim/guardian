@@ -1,0 +1,16 @@
+# Local Environment (High-Signal: Never commit these)
+.env
+
+# Binary outputs (The compiled code)
+bin/
+main
+
+# Dependency management
+vendor/
+
+# Operating System files
+.DS_Store
+Thumbs.db
+
+# Database Data (If you mount a volume for Postgres)
+pgdata/

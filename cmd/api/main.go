@@ -13,8 +13,7 @@ import (
 )
 
 func main() {
-	// 1. Load configuration from .env file
-	// This keeps your personal file paths out of GitHub.
+	// 1. Load configuration
 	if err := godotenv.Load(); err != nil {
 		log.Println("No .env file found, using system defaults")
 	}
@@ -22,50 +21,39 @@ func main() {
 	dbUrl := os.Getenv("DB_URL")
 	ingestPath := os.Getenv("INGEST_PATH")
 
-	// 2. Establish Database Connection
+	// 2. Database Connection
 	db, err := sql.Open("pgx", dbUrl)
 	if err != nil {
-		log.Fatalf("Connection failed: %v", err)
+		log.Fatal(err)
 	}
 	defer db.Close()
 
-	// 3. Initialize Schema (Surgical Catch: Ensure tables exist before scanning)
-	// This makes your system "Self-Healing".
+	// 3. Initialize Schema
 	initDatabase(db)
 
-	fmt.Printf("🛡️  Guardian: Scanning %s for assets...\n", ingestPath)
+	fmt.Printf("🛡️  Guardian: Scanning %s...\n", ingestPath)
 
-	// 4. Crawl the target folder
-	// We are looking for common image formats.
+	// 4. Run the Crawler
 	files, err := crawler.Search(ingestPath, []string{".jpg", ".png", ".ARW"})
 	if err != nil {
-		log.Fatalf("Crawl failed: %v", err)
+		log.Fatal(err)
 	}
 
-	// 5. Persist discovered assets to PostgreSQL
-	count := 0
+	// 5. Save to Store
 	for _, file := range files {
-		err := store.SaveAsset(db, file, "Photography")
-		if err != nil {
-			fmt.Printf("⚠️  Error saving %s: %v\n", file, err)
-			continue
-		}
-		count++
+		store.SaveAsset(db, file, "Photography")
 	}
 
-	fmt.Printf("✅ Success! Indexed %d files into the Vault.\n", count)
+	fmt.Printf("✅ Success! Indexed %d files into the Vault.\n", len(files))
 }
 
-// initDatabase ensures the necessary tables exist in the database.
 func initDatabase(db *sql.DB) {
-	query := `
-	CREATE TABLE IF NOT EXISTS daily_logs (
+	query := `CREATE TABLE IF NOT EXISTS daily_logs (
 		id SERIAL PRIMARY KEY,
 		category TEXT NOT NULL,
 		content JSONB NOT NULL,
 		created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 	);`
-
 	_, err := db.Exec(query)
 	if err != nil {
 		log.Fatalf("Migration failed: %v", err)
