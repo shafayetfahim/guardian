@@ -6,13 +6,14 @@ import (
 	"log"
 	"os"
 	"sync"
-	"time" // For measuring performance
+	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/joho/godotenv"
 	"github.com/shafayetfahim/guardian/internal/crawler"
 	"github.com/shafayetfahim/guardian/internal/extractor"
 	"github.com/shafayetfahim/guardian/internal/store"
+	"github.com/shafayetfahim/guardian/internal/validator"
 )
 
 func main() {
@@ -30,47 +31,47 @@ func main() {
 	}
 	defer db.Close()
 
-	// Set connection pool limits - another High-Signal move
 	db.SetMaxOpenConns(10)
 
 	initDatabase(db)
 
-	files, err := crawler.Search(ingestPath, []string{".jpg", ".jpeg", ".png", ".ARW"})
+	files, err := crawler.Search(ingestPath, []string{".jpg", ".jpeg", ".png", ".ARW", ".heic"})
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// --- CONCURRENCY BLOCK ---
 	tasks := make(chan string, len(files))
 	var wg sync.WaitGroup
-	const workerCount = 5 // Opinionated choice: stay within MacBook I/O limits
+	const workerCount = 5
 
-	// Start Workers
 	for i := 0; i < workerCount; i++ {
 		wg.Add(1)
-		go func(workerID int) {
+		go func(id int) {
 			defer wg.Done()
 			for file := range tasks {
+				if ok, err := validator.IsValidMedia(file); !ok {
+					fmt.Printf("[Worker %d] ⚠️ Skipping %s: %v\n", id, file, err)
+					continue
+				}
+
 				meta, err := extractor.ExtractPhotoData(file)
 				if err != nil {
 					meta = map[string]interface{}{"path": file, "error": "metadata_extraction_failed"}
 				}
 
 				if err := store.SaveAsset(db, file, "Photography", meta); err != nil {
-					fmt.Printf("[Worker %d] ❌ Error saving %s: %v\n", workerID, file, err)
+					fmt.Printf("[Worker %d] ❌ Error saving %s: %v\n", id, file, err)
 				}
 			}
 		}(i)
 	}
 
-	// Feed Tasks
 	for _, file := range files {
 		tasks <- file
 	}
-	close(tasks) // Signal workers to stop when queue is empty
+	close(tasks)
 
 	wg.Wait()
-	// -------------------------
 
 	fmt.Printf("✅ Success! Indexed %d files in %v using %d workers.\n", len(files), time.Since(start), workerCount)
 }
@@ -82,11 +83,22 @@ func initDatabase(db *sql.DB) {
 		content JSONB NOT NULL,
 		created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 	);`
-	db.Exec(tableQuery)
+	if _, err := db.Exec(tableQuery); err != nil {
+		log.Fatalf("Table migration failed: %v", err)
+	}
 
 	viewQuery := `CREATE OR REPLACE VIEW photo_analytics AS
-	SELECT id, content->>'path' as path, content->>'camera' as camera, 
-	content->>'lens' as lens, content->>'aperture' as aperture, created_at
-	FROM daily_logs WHERE category = 'Photography';`
-	db.Exec(viewQuery)
+	SELECT 
+		id,
+		content->>'path' as path,
+		content->>'camera' as camera,
+		content->>'lens' as lens,
+		content->>'aperture' as aperture,
+		content->>'iso' as iso,
+		created_at
+	FROM daily_logs
+	WHERE category = 'Photography';`
+	if _, err := db.Exec(viewQuery); err != nil {
+		log.Fatalf("View creation failed: %v", err)
+	}
 }
