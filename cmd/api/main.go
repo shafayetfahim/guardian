@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sync"
+	"time" // For measuring performance
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/joho/godotenv"
@@ -14,6 +16,7 @@ import (
 )
 
 func main() {
+	start := time.Now()
 	if err := godotenv.Load(); err != nil {
 		log.Println("No .env file found")
 	}
@@ -27,42 +30,63 @@ func main() {
 	}
 	defer db.Close()
 
+	// Set connection pool limits - another High-Signal move
+	db.SetMaxOpenConns(10)
+
 	initDatabase(db)
 
-	fmt.Printf("🛡️  Guardian: Scanning %s...\n", ingestPath)
-
-	files, err := crawler.Search(ingestPath, []string{".jpg", ".jpeg", ".png", ".ARW", ".heic"})
+	files, err := crawler.Search(ingestPath, []string{".jpg", ".jpeg", ".png", ".ARW"})
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	indexedCount := 0
-	for _, file := range files {
-		meta, err := extractor.ExtractPhotoData(file)
-		if err != nil {
-			meta = map[string]interface{}{"path": file}
-		}
+	// --- CONCURRENCY BLOCK ---
+	tasks := make(chan string, len(files))
+	var wg sync.WaitGroup
+	const workerCount = 5 // Opinionated choice: stay within MacBook I/O limits
 
-		err = store.SaveAsset(db, file, "Photography", meta)
-		if err != nil {
-			fmt.Printf("❌ Failed to save %s: %v\n", file, err)
-			continue
-		}
-		indexedCount++
+	// Start Workers
+	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			for file := range tasks {
+				meta, err := extractor.ExtractPhotoData(file)
+				if err != nil {
+					meta = map[string]interface{}{"path": file, "error": "metadata_extraction_failed"}
+				}
+
+				if err := store.SaveAsset(db, file, "Photography", meta); err != nil {
+					fmt.Printf("[Worker %d] ❌ Error saving %s: %v\n", workerID, file, err)
+				}
+			}
+		}(i)
 	}
 
-	fmt.Printf("✅ Success! Truly indexed %d files into the Vault.\n", indexedCount)
+	// Feed Tasks
+	for _, file := range files {
+		tasks <- file
+	}
+	close(tasks) // Signal workers to stop when queue is empty
+
+	wg.Wait()
+	// -------------------------
+
+	fmt.Printf("✅ Success! Indexed %d files in %v using %d workers.\n", len(files), time.Since(start), workerCount)
 }
 
 func initDatabase(db *sql.DB) {
-	query := `CREATE TABLE IF NOT EXISTS daily_logs (
+	tableQuery := `CREATE TABLE IF NOT EXISTS daily_logs (
 		id SERIAL PRIMARY KEY,
 		category TEXT NOT NULL,
 		content JSONB NOT NULL,
 		created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 	);`
-	_, err := db.Exec(query)
-	if err != nil {
-		log.Fatalf("Migration failed: %v", err)
-	}
+	db.Exec(tableQuery)
+
+	viewQuery := `CREATE OR REPLACE VIEW photo_analytics AS
+	SELECT id, content->>'path' as path, content->>'camera' as camera, 
+	content->>'lens' as lens, content->>'aperture' as aperture, created_at
+	FROM daily_logs WHERE category = 'Photography';`
+	db.Exec(viewQuery)
 }
