@@ -2,7 +2,6 @@ package extractor
 
 import (
 	"os"
-
 	"github.com/rwcarlsen/goexif/exif"
 )
 
@@ -21,7 +20,7 @@ func ExtractPhotoData(path string) (map[string]interface{}, error) {
 
 	// Helper to extract specific tags safely
 	data := make(map[string]interface{})
-
+	
 	if cam, err := x.Get(exif.Model); err == nil {
 		data["camera"] = cam.String()
 	}
