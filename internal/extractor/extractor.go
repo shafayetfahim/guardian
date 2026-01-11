@@ -2,11 +2,20 @@ package extractor
 
 import (
 	"os"
+	"strings"
+
 	"github.com/rwcarlsen/goexif/exif"
 )
 
-// ExtractPhotoData opens a file and pulls the 'Holy Grail' settings
-func ExtractPhotoData(path string) (map[string]interface{}, error) {
+type PhotoMetadata struct {
+	Path     string `json:"path"`
+	Camera   string `json:"camera"`
+	Aperture string `json:"aperture"`
+	ISO      string `json:"iso"`
+	Lens     string `json:"lens"`
+}
+
+func ExtractPhotoData(path string) (*PhotoMetadata, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -18,21 +27,22 @@ func ExtractPhotoData(path string) (map[string]interface{}, error) {
 		return nil, err
 	}
 
-	// Helper to extract specific tags safely
-	data := make(map[string]interface{})
-	
-	if cam, err := x.Get(exif.Model); err == nil {
-		data["camera"] = cam.String()
+	data := &PhotoMetadata{
+		Path: path,
 	}
-	if fstop, err := x.Get(exif.FNumber); err == nil {
-		data["aperture"] = fstop.String()
+
+	clean := func(tag exif.FieldName) string {
+		val, err := x.Get(tag)
+		if err != nil {
+			return "Unknown"
+		}
+		return strings.Trim(val.String(), "\"")
 	}
-	if iso, err := x.Get(exif.ISOSpeedRatings); err == nil {
-		data["iso"] = iso.String()
-	}
-	if lens, err := x.Get(exif.LensModel); err == nil {
-		data["lens"] = lens.String()
-	}
+
+	data.Camera = clean(exif.Model)
+	data.Aperture = clean(exif.FNumber)
+	data.ISO = clean(exif.ISOSpeedRatings)
+	data.Lens = clean(exif.LensModel)
 
 	return data, nil
 }

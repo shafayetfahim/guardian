@@ -1,3 +1,5 @@
+Guardian, a Metadata Indexer
+
 I'm into photography, but it can be difficult to sift through a lot of RAW/JPEG files trying to find "the right shot". I wanted a way to pre-filter photos, which requires indexing hundreds, if not thousands, of photos by their EXIF metadata.
 
 That's the role Guardian serves. It's a concurrent file indexing system built in Go for managing photography metadata. It scans a directory for images, extracts EXIF metadata (like the lens model, aperture, or ISO value), and stores it in a PostgreSQL database. It is designed to handle local image libraries using a modular backend architecture.
